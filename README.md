@@ -2,6 +2,9 @@
 
 16 款经典小游戏的纯前端合集。**零依赖、零构建、零联网**，双击 `index.html` 即可开玩。
 
+> 🌐 在线版：<https://game.20050905.xyz>
+> 源码：<https://github.com/steveliuyan/mini-games>
+
 - 统一游戏大厅（分类筛选 / 搜索 / 卡片式入口）
 - 每款游戏独立最高分（localStorage 持久化）
 - 26 项成就墙 + 全局统计（对局数、游玩时长、通关数）
