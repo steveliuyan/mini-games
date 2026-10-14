@@ -184,6 +184,8 @@
   function buildDpad(names, roundStyle) {
     if (dpadEl) { dpadEl.remove(); dpadEl = null; }
     dpadButtons = [];
+    // 方向键是 fixed 浮层，不占布局；用 has-dpad 让 .stage 预留底部空间，避免盖住棋盘
+    if (viewGame) viewGame.classList.remove('has-dpad');
     if (!names || !names.length) return;
 
     dpadEl = el('div', 'dpad');
@@ -207,6 +209,7 @@
       dpadEl.appendChild(right);
     }
     touchLayer.appendChild(dpadEl);
+    if (viewGame) viewGame.classList.add('has-dpad');
 
     function mkBtn(name, cls) {
       var b = el('button', 'dpad-btn ' + cls, glyph(name));
@@ -313,6 +316,7 @@
     try { s.unbinders.forEach(function (f) { f(); }); } catch (e) {}
     try { if (s.handle && s.handle.destroy) s.handle.destroy(); } catch (e) { console.error('[destroy]', e); }
     if (dpadEl) { dpadEl.remove(); dpadEl = null; }
+    if (viewGame) viewGame.classList.remove('has-dpad');
     U.clear(stageEl);
     return s;
   }
