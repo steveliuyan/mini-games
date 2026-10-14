@@ -248,15 +248,18 @@
 .card-play .arw { transition: transform .24s var(--ease); }
 .card:hover .card-play .arw { transform: translateX(4px); }
 
-.badge-new {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  padding: 2px 8px;
+/* NEW 徽标：跟随游戏名内联排布，宽度自适应，任何视口都不会与名字重叠 */
+.card-name .badge-new {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 6px;
+  padding: 1px 7px;
   border-radius: 999px;
   font-size: 9.5px;
   font-weight: 800;
   letter-spacing: .08em;
+  line-height: 1.6;
+  white-space: nowrap;
   background: var(--good);
   color: #04251a;
 }

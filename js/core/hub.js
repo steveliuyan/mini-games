@@ -135,10 +135,11 @@
         '<div class="card-top">' +
           '<div class="card-ico">' + g.icon + '</div>' +
           '<div class="card-head">' +
-            '<div class="card-name">' + g.name + '</div>' +
+            '<div class="card-name">' + g.name +
+              (plays === 0 ? '<span class="badge-new">NEW</span>' : '') +
+            '</div>' +
             '<div class="card-desc">' + (g.desc || '') + '</div>' +
           '</div>' +
-          (plays === 0 ? '<span class="badge-new">NEW</span>' : '') +
         '</div>' +
         '<div class="card-foot">' +
           bestHtml +
