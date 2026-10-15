@@ -30,8 +30,15 @@
       var R = 7;                          // 球半径
       var ROW_COLORS = ['#f87171', '#fbbf24', '#34d399', '#38bdf8', '#a78bfa', '#fb7185'];
 
-      var bricks, paddle, ball, life, level, levelT, launched;
+      var bricks, paddle, paddleVis, ball, life, level, levelT, launched;
       var held, particles, trail, shake, flash, over, last;
+
+      /* 难度：球速曲线 / 挡板速度 / 生命数 / 硬砖比例 */
+      var LV = [
+        { name: '轻松', v0: 230, vAdd: 24, vMax: 480, pad: 520, life: 5, hard: 0.5 },
+        { name: '标准', v0: 268, vAdd: 34, vMax: 600, pad: 620, life: 3, hard: 1 },
+        { name: '挑战', v0: 320, vAdd: 40, vMax: 690, pad: 700, life: 2, hard: 1.6 }
+      ];
 
       /* ------------------------ 关卡布局 ------------------------ */
       function buildLevel() {
@@ -41,22 +48,24 @@
         var rows = Math.min(4 + level, 7);
         var pat = (level - 1) % 3;        // 三种布局循环递进
         var mid = (cols - 1) / 2;
+        var c = lvBar.lv();
+        var hardRows = Math.round(rows * c.hard * 0.3);
 
         for (var r = 0; r < rows; r++) {
-          for (var c = 0; c < cols; c++) {
+          for (var col = 0; col < cols; col++) {
             var hp = 1, keep = true;
             if (pat === 0) {                 // 实心：顶排为硬砖
-              hp = r < 1 ? 2 : 1;
+              hp = r < Math.max(1, hardRows) ? 2 : 1;
             } else if (pat === 1) {          // 棋盘格
-              keep = (r + c) % 2 === 0;
-              hp = (r + c) % 3 === 0 ? 2 : 1;
+              keep = (r + col) % 2 === 0;
+              hp = (r + col) % 3 === 0 ? 2 : 1;
             } else {                         // 金字塔
-              keep = Math.abs(c - mid) <= Math.min(mid, r + 1.5);
-              hp = r >= rows - 2 ? 2 : 1;
+              keep = Math.abs(col - mid) <= Math.min(mid, r + 1.5);
+              hp = r >= rows - hardRows ? 2 : 1;
             }
             if (!keep) continue;
             bricks.push({
-              x: padX + c * (bw + gapX),
+              x: padX + col * (bw + gapX),
               y: topY + r * (bh + gapY),
               w: bw, h: bh, hp: hp, max: hp,
               color: ROW_COLORS[r % ROW_COLORS.length]
@@ -67,12 +76,14 @@
 
       /* ------------------------ 状态 ------------------------ */
       function reset() {
-        level = 1; levelT = 0; life = 3; over = false;
+        level = 1; levelT = 0; over = false;
+        life = lvBar.lv().life;
         last = 0; shake = 0; flash = 0;
         dragging = false;
         held = { left: false, right: false };
         particles = []; trail = [];
         paddle = { x: (W - PAD_W) / 2 };
+        paddleVis = { x: paddle.x, squash: 0 };
         ball = { x: 0, y: 0, vx: 0, vy: 0 };
         buildLevel();
         resetBall();
@@ -95,8 +106,9 @@
       }
 
       function ballSpeed() {
-        // 随关卡与时间递增，上限 600
-        return Math.min(600, 268 + (level - 1) * 34 + levelT * 2.4);
+        // 随关卡与时间递增，受难度档位上限约束
+        var c = lvBar.lv();
+        return Math.min(c.vMax, c.v0 + (level - 1) * c.vAdd + levelT * 2.4);
       }
 
       function launch() {
@@ -141,6 +153,7 @@
         ball.y = PAD_Y - R - 0.5;
         api.audio.play('hit');
         burst(ball.x, ball.y, '#5b8cff', 6);
+        paddleVis.squash = 1;   // 挡板受压扁回弹
       }
 
       function collideBricks() {
@@ -160,6 +173,7 @@
           }
 
           b.hp--;
+          b.hitFx = 1;   // 受击白闪+抖动
           if (b.hp <= 0) {
             api.addScore(b.max > 1 ? 20 : 10);
             burst(b.x + b.w / 2, b.y + b.h / 2, b.color, 10);
@@ -240,11 +254,19 @@
 
       function update(dt) {
         levelT += dt;
+        var c = lvBar.lv();
         var pv = (held.left ? -1 : 0) + (held.right ? 1 : 0);
-        paddle.x = api.clamp(paddle.x + pv * PAD_SPEED * dt, 0, W - PAD_W);
+        paddle.x = api.clamp(paddle.x + pv * c.pad * dt, 0, W - PAD_W);
+        // 挡板渲染平滑跟随 + 受压回弹衰减（帧率无关）
+        paddleVis.x = U.damp(paddleVis.x, paddle.x, 26, dt);
+        if (paddleVis.squash > 0) paddleVis.squash = Math.max(0, paddleVis.squash - dt * 5);
+        // 砖块受击抖动衰减
+        for (var bi = 0; bi < bricks.length; bi++) {
+          if (bricks[bi].hitFx > 0) bricks[bi].hitFx = Math.max(0, bricks[bi].hitFx - dt * 6);
+        }
 
         if (!launched) {
-          ball.x = paddle.x + PAD_W / 2;
+          ball.x = paddleVis.x + PAD_W / 2;
           ball.y = PAD_Y - R - 2;
         } else {
           moveBall(dt);
@@ -275,12 +297,23 @@
         // 砖块
         for (var i = 0; i < bricks.length; i++) {
           var b = bricks[i];
+          var hx = 0, hy = 0;
+          if (b.hitFx > 0) {
+            hx = Math.sin(b.hitFx * 40) * b.hitFx * 2.4;
+            hy = Math.cos(b.hitFx * 33) * b.hitFx * 1.6;
+          }
           ctx.save();
           ctx.shadowColor = api.rgba(b.color, 0.5);
           ctx.shadowBlur = b.hp > 1 ? 14 : 7;
-          rr(ctx, b.x, b.y, b.w, b.h, 5);
+          rr(ctx, b.x + hx, b.y + hy, b.w, b.h, 5);
           ctx.fillStyle = b.hp > 1 ? b.color : api.rgba(b.color, 0.78);
           ctx.fill();
+          if (b.hitFx > 0) {   // 受击白闪
+            ctx.globalAlpha = b.hitFx * 0.7;
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
           ctx.restore();
           // 高光
           rr(ctx, b.x + 2, b.y + 2, b.w - 4, b.h * 0.34, 3);
@@ -308,19 +341,25 @@
           ctx.fill();
         }
 
-        // 挡板
-        var grad = ctx.createLinearGradient(paddle.x, PAD_Y, paddle.x + PAD_W, PAD_Y + PAD_H);
+        // 挡板（平滑跟随 + 受压扁回弹）
+        var px = paddleVis.x;
+        var sq = paddleVis.squash;
+        var ph = PAD_H * (1 - sq * 0.35);
+        var pw = PAD_W * (1 + sq * 0.10);
+        var pxo = px - (pw - PAD_W) / 2;
+        var pyo = PAD_Y + (PAD_H - ph);
+        var grad = ctx.createLinearGradient(pxo, pyo, pxo + pw, pyo + ph);
         grad.addColorStop(0, '#8fb4ff');
         grad.addColorStop(0.5, '#5b8cff');
         grad.addColorStop(1, '#3d63d6');
         ctx.save();
         ctx.shadowColor = 'rgba(47,107,255,.6)';
         ctx.shadowBlur = 18;
-        rr(ctx, paddle.x, PAD_Y, PAD_W, PAD_H, PAD_H / 2);
+        rr(ctx, pxo, pyo, pw, ph, ph / 2);
         ctx.fillStyle = grad;
         ctx.fill();
         ctx.restore();
-        rr(ctx, paddle.x + 6, PAD_Y + 3, PAD_W - 12, 3, 2);
+        rr(ctx, pxo + 6, pyo + 3, pw - 12, 3, 2);
         ctx.fillStyle = 'rgba(255,255,255,.4)';
         ctx.fill();
 
@@ -414,6 +453,12 @@
         api.on(window, 'pointerup', onUp),
         api.on(window, 'pointercancel', onUp)
       ];
+
+      /* ------------------------ 难度（持久化） ------------------------ */
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
+      });
 
       reset();
       api.setStatus('第 1 关 · ♥♥♥ · 砖块 ' + bricks.length);

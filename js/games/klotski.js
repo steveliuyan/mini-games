@@ -37,6 +37,7 @@
     'box-shadow:inset 0 -3px 0 rgba(0,0,0,.22),0 3px 10px rgba(0,0,0,.35);',
     'font-size:calc(var(--cell,64px)*.3);line-height:1.15;text-align:center;}',
     '.kl-piece.is-sel .kl-face{box-shadow:inset 0 0 0 2px #fff,0 0 16px rgba(244,63,94,.65);}',
+    '.kl-piece.is-movable .kl-face{outline:2px solid rgba(52,211,153,.65);outline-offset:-2px;}',
     '.kl-piece.k-boss .kl-face{font-size:calc(var(--cell,64px)*.36);}',
     '.kl-piece.k-small .kl-face{font-size:calc(var(--cell,64px)*.34);}'
   ].join('');
@@ -56,6 +57,13 @@
     mount: function (root, api) {
       var pieces = [];
       var steps = 0, done = false, selId = null, cell = 64;
+
+      /* 难度：计分斜率 / 可动滑块高亮提示 */
+      var LV = [
+        { name: '轻松', per: 6, hint: true },
+        { name: '标准', per: 10, hint: false },
+        { name: '挑战', per: 16, hint: false }
+      ];
       var drag = null;
       var unbinds = [];
 
@@ -137,22 +145,36 @@
         fit();
         api.timeout(fit, 0);
         paint();
-        api.setScore(3000);
+        api.setScore(scoreOf());
         updateStatus();
       }
 
       function paint() {
+        var mov = lvBar.lv().hint ? movableIds() : [];
         pieces.forEach(function (p) {
           p.node.style.left = (p.x / COLS * 100) + '%';
           p.node.style.top = (p.y / ROWS * 100) + '%';
           p.node.style.width = (p.w / COLS * 100) + '%';
           p.node.style.height = (p.h / ROWS * 100) + '%';
           p.node.classList.toggle('is-sel', p.id === selId);
+          if (lvBar.lv().hint) p.node.classList.toggle('is-movable', mov.indexOf(p.id) > -1);
+          else p.node.classList.remove('is-movable');
         });
       }
 
+      function scoreOf() {
+        return Math.max(0, 3000 - steps * lvBar.lv().per);
+      }
+      function movableIds() {
+        var out = [];
+        pieces.forEach(function (p) {
+          if (canPlace(p, p.x + 1, p.y) || canPlace(p, p.x - 1, p.y) ||
+              canPlace(p, p.x, p.y + 1) || canPlace(p, p.x, p.y - 1)) out.push(p.id);
+        });
+        return out;
+      }
       function updateStatus() {
-        api.setStatus('步数 ' + steps + ' · 当前得分 ' + Math.max(0, 3000 - steps * 10));
+        api.setStatus('步数 ' + steps + ' · 当前得分 ' + scoreOf());
       }
 
       /* ---------------- 逻辑 ---------------- */
@@ -188,7 +210,7 @@
         steps++;
         paint();
         updateStatus();
-        api.setScore(Math.max(0, 3000 - steps * 10));
+        api.setScore(scoreOf());
         api.audio.play('move');
         checkWin();
         return true;
@@ -204,7 +226,7 @@
         for (var i = 0; i < pieces.length; i++) if (pieces[i].id === 'cao') cao = pieces[i];
         if (!cao || cao.x !== 1 || cao.y !== 3) return;
         done = true;
-        var sc = Math.max(0, 3000 - steps * 10);
+        var sc = scoreOf();
         api.setScore(sc);
         api.audio.play('win');
         api.finish({
@@ -256,6 +278,11 @@
 
       unbinds.push(U.on(board, 'pointerup', function () { drag = null; }));
       unbinds.push(U.on(board, 'pointercancel', function () { drag = null; }));
+
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
+      });
 
       reset();
 

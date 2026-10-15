@@ -290,20 +290,15 @@
       /* ---------------- 控件 ---------------- */
       var bar = api.ctrlBar();
 
-      var rangeChips = [];
-      RANGES.forEach(function (r) {
-        var b = U.el('button', 'chip' + (r.id === level ? ' is-active' : ''), r.name);
-        b.type = 'button';
-        b.addEventListener('click', function () {
+      var lvBar = api.levelBar({
+        levels: RANGES, label: '难度', dflt: 1,
+        onPick: function (i, r) {
           level = r.id;
-          rangeChips.forEach(function (o) { o.el.classList.toggle('is-active', o.id === level); });
-          api.audio.play('select');
           reset();
           api.toast('范围 1 ~ ' + r.max, { icon: '🎚️' });
-        });
-        rangeChips.push({ id: r.id, el: b });
-        bar.appendChild(b);
+        }
       });
+      level = RANGES[lvBar.cur()].id;
 
       var modeChips = [];
       [['me', '我来猜'], ['ai', 'AI 来猜']].forEach(function (m) {

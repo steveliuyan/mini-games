@@ -36,6 +36,15 @@
     mount: function (root, api) {
       var SIZE = 4;
       var grid, score, maxTile, over, won, mergedMask, busy;
+      var lastMove = null;   // 本次滑动映射：{ r,c,fromR,fromC,merged } 用于 FLIP 滑动动画
+      var freshCells = {};   // 新生成格 → true（弹入动画）
+
+      /* 难度：新方块 4 的出现概率（越高越易出大牌=轻松） */
+      var LV = [
+        { name: '轻松', p4: 0.2 },
+        { name: '标准', p4: 0.1 },
+        { name: '挑战', p4: 0.04 }
+      ];
 
       var board = U.el('div', 'board');
       board.style.gridTemplateColumns = 'repeat(' + SIZE + ', var(--cell))';
@@ -100,9 +109,10 @@
         var e = empties();
         if (!e.length) return null;
         var pick = e[Math.floor(Math.random() * e.length)];
-        var v = Math.random() < 0.9 ? 2 : 4;
+        var v = Math.random() < lvBar.lv().p4 ? 4 : 2;
         grid[pick[0]][pick[1]] = v;
         if (v > maxTile) maxTile = v;
+        freshCells[pick[0] * SIZE + pick[1]] = true;
         return pick;
       }
 
@@ -133,40 +143,62 @@
         var moved = false;
         var newMask = emptyMask();
         var gained = 0;
+        var moves = [];
 
         for (var line = 0; line < SIZE; line++) {
           var slice = coordsList.slice(line * SIZE, line * SIZE + SIZE);
           var vals = slice.map(function (p) { return grid[p[0]][p[1]]; });
-          var arr = vals.filter(function (v) { return v > 0; });
+          var arr = [];
+          for (var q = 0; q < vals.length; q++) if (vals[q] > 0) arr.push({ v: vals[q], from: slice[q] });
           var out = [];
           var outIsMerge = [];
+          var outFrom = [];
           for (var i = 0; i < arr.length; i++) {
-            if (arr[i] === arr[i + 1]) {
-              out.push(arr[i] * 2);
+            if (arr[i] && arr[i + 1] && arr[i].v === arr[i + 1].v) {
+              out.push(arr[i].v * 2);
               outIsMerge.push(true);
-              gained += arr[i] * 2;
+              outFrom.push([arr[i].from, arr[i + 1].from]);
+              gained += arr[i].v * 2;
               i++;
             } else {
-              out.push(arr[i]);
+              out.push(arr[i].v);
               outIsMerge.push(false);
+              outFrom.push([arr[i].from]);
             }
           }
-          while (out.length < SIZE) { out.push(0); outIsMerge.push(false); }
+          while (out.length < SIZE) { out.push(0); outIsMerge.push(false); outFrom.push(null); }
 
           for (var k = 0; k < SIZE; k++) {
             var p = slice[k];
             if (grid[p[0]][p[1]] !== out[k]) moved = true;
             grid[p[0]][p[1]] = out[k];
             newMask[p[0]][p[1]] = outIsMerge[k];
+            if (out[k] && outFrom[k]) {
+              for (var f = 0; f < outFrom[k].length; f++) {
+                var frm = outFrom[k][f];
+                if (frm[0] !== p[0] || frm[1] !== p[1]) {
+                  moves.push({ r: p[0], c: p[1], fr: frm[0], fc: frm[1] });
+                }
+              }
+            }
           }
         }
 
         if (!moved) {
           api.audio.play('tick');
+          // 不可移动方向：棋盘微震反馈
+          if (board.animate) {
+            var sh = dir === 'left' || dir === 'right' ? 'translateX(4px)' : 'translateY(4px)';
+            board.animate(
+              [{ transform: 'none' }, { transform: sh }, { transform: 'none' }],
+              { duration: 160, easing: 'ease-out' }
+            );
+          }
           return;
         }
 
         mergedMask = newMask;
+        lastMove = moves;
         score += gained;
         if (gained) api.audio.play('score'); else api.audio.play('move');
         api.setScore(score);
@@ -217,6 +249,8 @@
 
       /* ---------------- 渲染 ---------------- */
       function render() {
+        var cellPx = parseFloat(getComputedStyle(board).getPropertyValue('--cell')) || 76;
+        var gap = 5;
         U.clear(board);
         for (var r = 0; r < SIZE; r++) {
           for (var c = 0; c < SIZE; c++) {
@@ -230,17 +264,47 @@
               cell.style.boxShadow = 'inset 0 -2px 0 rgba(0,0,0,.18)';
               cell.textContent = v;
               if (v >= 1024) cell.style.fontSize = 'calc(var(--cell) * .3)';
-              if (mergedMask[r][c] && cell.animate) {
-                cell.animate(
-                  [{ transform: 'scale(.6)', opacity: .4 }, { transform: 'scale(1.14)' }, { transform: 'scale(1)' }],
-                  { duration: 190, easing: 'cubic-bezier(.22,1,.36,1)' }
-                );
+              if (cell.animate) {
+                if (mergedMask[r][c]) {
+                  // 合成：合流 + 弹跳
+                  cell.animate(
+                    [{ transform: 'scale(.6)', opacity: .4 }, { transform: 'scale(1.14)' }, { transform: 'scale(1)' }],
+                    { duration: 220, easing: 'cubic-bezier(.22,1,.36,1)', delay: 90 }
+                  );
+                } else if (freshCells[r * SIZE + c]) {
+                  // 新方块：淡入弹出
+                  cell.animate(
+                    [{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.08)', opacity: 1 }, { transform: 'scale(1)' }],
+                    { duration: 180, easing: 'cubic-bezier(.22,1,.36,1)' }
+                  );
+                }
               }
             }
             board.appendChild(cell);
+            cell._pos = [r, c];
           }
         }
+        // FLIP：把滑动前的位置偏移回来，再动画归位（连贯滑动感）
+        if (lastMove && lastMove.length && board.animate !== undefined) {
+          for (var m = 0; m < lastMove.length; m++) {
+            var mv = lastMove[m];
+            var node = cellAt(mv.r, mv.c);
+            if (!node || !node.animate) continue;
+            var dx = (mv.fc - mv.c) * (cellPx + gap);
+            var dy = (mv.fr - mv.r) * (cellPx + gap);
+            node.animate(
+              [{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'translate(0,0)' }],
+              { duration: 150, easing: 'cubic-bezier(.25,.8,.35,1)' }
+            );
+          }
+        }
+        lastMove = null;
+        freshCells = {};
         mergedMask = emptyMask();
+      }
+      function cellAt(r, c) {
+        var kids = board.children;
+        return kids[r * SIZE + c] || null;
       }
 
       function updateStatus() {
@@ -259,6 +323,10 @@
       });
 
       /* ---------------- 按钮 ---------------- */
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
+      });
       var bar = api.ctrlBar();
       var retry = U.el('button', 'chip', '重新开始');
       retry.addEventListener('click', function () { GH.Audio.play('click'); reset(); });

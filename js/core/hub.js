@@ -412,6 +412,39 @@
         node.innerHTML = text;
       },
       ctrlBar: function () { var n = el('div', 'gctrl'); stageEl.appendChild(n); return n; },
+
+      /* --- 统一难度选择条（自动持久化到 settings，刷新/重开都保留） ---
+         opts: { levels: [{name, ...}], dflt, label, onPick(idx, lv) }
+         返回 { cur() 当前索引, lv() 当前档位对象 } */
+      levelBar: function (opts) {
+        var levels = opts.levels || [];
+        var storeKey = 'level.' + def.id;
+        var dflt = opts.dflt == null ? Math.min(1, levels.length - 1) : opts.dflt;
+        var idx = GH.Store.getSetting(storeKey, dflt);
+        if (typeof idx !== 'number' || idx < 0 || idx >= levels.length) idx = dflt;
+        var state = { idx: idx };
+        var bar = api.ctrlBar();
+        if (opts.label) { bar.appendChild(el('span', 'chip-label', opts.label)); }
+        var items = [];
+        levels.forEach(function (lv, i) {
+          var b = el('button', 'chip' + (i === state.idx ? ' is-active' : ''), lv.name);
+          b.type = 'button';
+          b.addEventListener('click', function () {
+            if (i === state.idx) return;
+            state.idx = i;
+            GH.Store.setSetting(storeKey, i);
+            items.forEach(function (o, j) { o.classList.toggle('is-active', j === i); });
+            GH.Audio.play('select');
+            if (opts.onPick) opts.onPick(i, levels[i]);
+          });
+          items.push(b);
+          bar.appendChild(b);
+        });
+        return {
+          cur: function () { return state.idx; },
+          lv: function () { return levels[state.idx]; }
+        };
+      },
       toast: GH.UI.toast,
       info: GH.UI.info,
       confirm: GH.UI.confirm,

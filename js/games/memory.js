@@ -8,7 +8,9 @@
   /* 牌面 emoji 池（6×6 需要 18 对） */
   var EMOJIS = [
     '🍎', '🍌', '🍇', '🍓', '🍑', '🍍', '🥝', '🍒', '🍉', '🥕', '🌽', '🍄',
-    '🌸', '🍀', '⭐', '🌙', '⚡', '🔥', '💎', '🎈', '🎵', '🚀', '🍩', '🐳'
+    '🌸', '🍀', '⭐', '🌙', '⚡', '🔥', '💎', '🎈', '🎵', '🚀', '🍩', '🐳',
+    '🦄', '🐝', '🐞', '🦋', '🌈', '🍄', '🌻', '🌵', '🎁', '🎨', '🎲', '🏀',
+    '⚽', '🎯', '🍦', '🧁'
   ];
 
   /* 3D 翻转所需的样式（挂到 board 上，随会话一起销毁） */
@@ -56,6 +58,13 @@
       var done = false;
       var flips = 0, mistakes = 0, sec = 0, matchedCount = 0, pairs = 8;
 
+      /* 难度：棋盘边长 */
+      var LV = [
+        { name: '轻松 4×4', n: 4 },
+        { name: '标准 6×6', n: 6 },
+        { name: '挑战 8×8', n: 8 }
+      ];
+
       /* ---------------- 结构 ---------------- */
       var style = U.el('style');
       style.textContent = STYLE;
@@ -64,29 +73,16 @@
       var board = U.el('div', 'mem-board');
       root.appendChild(board);
 
-      var bar = api.ctrlBar();
-      var chips = [];
-      [[4, '4×4 轻松'], [6, '6×6 挑战']].forEach(function (it) {
-        var b = U.el('button', 'chip', it[1]);
-        b.type = 'button';
-        b.addEventListener('click', function () {
-          if (N === it[0]) return;
-          GH.Audio.play('click');
-          N = it[0];
-          paintChips();
-          reset();
-        });
-        chips.push({ n: it[0], node: b });
-        bar.appendChild(b);
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function (i, lv) { N = lv.n; reset(); }
       });
+      N = LV[lvBar.cur()].n;
+      var bar = api.ctrlBar();
       var retry = U.el('button', 'chip', '重开');
       retry.type = 'button';
       retry.addEventListener('click', function () { GH.Audio.play('click'); reset(); });
       bar.appendChild(retry);
-
-      function paintChips() {
-        chips.forEach(function (c) { c.node.classList.toggle('is-active', c.n === N); });
-      }
 
       /* ---------------- 自适应 ---------------- */
       function fit() {
@@ -146,7 +142,6 @@
         api.setScore(0);
         updateScore();
         updateStatus();
-        paintChips();
       }
 
       /* ---------------- 翻牌 ---------------- */

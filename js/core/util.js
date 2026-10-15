@@ -237,11 +237,39 @@ window.GH = window.GH || {};
     ctx.restore();
   }
 
+  /* ------------------------ 缓动 / 平滑插值 ------------------------ */
+  GH.ease = {
+    linear: function (t) { return t; },
+    outQuad: function (t) { return t * (2 - t); },
+    inOutQuad: function (t) { return t < .5 ? 2 * t * t : -1 + (4 - 2 * t) * t; },
+    outCubic: function (t) { var p = t - 1; return p * p * p + 1; },
+    inCubic: function (t) { return t * t * t; },
+    outQuart: function (t) { var p = t - 1; return 1 - p * p * p * p; },
+    outBack: function (t) { var p = t - 1; return 1 + 2.7 * p * p * p + 1.7 * p * p; },
+    outElastic: function (t) {
+      if (t <= 0) return 0; if (t >= 1) return 1;
+      return Math.pow(2, -10 * t) * Math.sin((t * 10 - .75) * (2 * Math.PI / 3)) + 1;
+    },
+    outBounce: function (t) {
+      var n = 7.5625, d = 2.75;
+      if (t < 1 / d) return n * t * t;
+      if (t < 2 / d) { t -= 1.5 / d; return n * t * t + .75; }
+      if (t < 2.5 / d) { t -= 2.25 / d; return n * t * t + .9375; }
+      t -= 2.625 / d; return n * t * t + .984375;
+    }
+  };
+
+  /* 帧率无关的指数平滑（damping）：rate 越大越快贴合；dt 秒 */
+  GH.damp = function (cur, target, rate, dt) {
+    return cur + (target - cur) * (1 - Math.exp(-rate * dt));
+  };
+
   var DEFAULT_FONT = '-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 
   GH.util = {
     $: $, $$: $$, el: el, on: on, clear: clear,
-    clamp: clamp, lerp: lerp, randInt: randInt, randFloat: randFloat,
+    clamp: clamp, lerp: lerp, damp: GH.damp, ease: GH.ease,
+    randInt: randInt, randFloat: randFloat,
     choice: choice, shuffle: shuffle, chance: chance,
     fmtNum: fmtNum, fmtDuration: fmtDuration, fmtClock: fmtClock, fmtDate: fmtDate,
     hexToRgb: hexToRgb, rgba: rgba, shade: shade,

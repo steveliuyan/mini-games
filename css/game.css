@@ -223,6 +223,14 @@
   transition: all .18s var(--ease);
 }
 .chip:hover { background: var(--panel-hi); color: var(--text); }
+.chip-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: .5px;
+  margin-right: -2px;
+  user-select: none;
+}
 .chip.is-active {
   background: linear-gradient(135deg, var(--accent), var(--accent-3));
   border-color: transparent;

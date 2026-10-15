@@ -23,11 +23,17 @@
       var g = api.canvas({ w: W, h: H });
       var ctx = g.ctx;
 
-      var GRAV = 700;          // 重力加速度 px/s²
+      var GRAV = 700;          // 重力加速度 px/s²（难度可调）
       var R = 9;               // 弹珠半径
       var STEP = 1 / 240;      // 固定物理步长
       var MAXV = 1500;
-      var BALLS = 3;
+
+      /* 难度：弹珠数 / 重力 / 目标冷却 / 蓄力周期 */
+      var LV = [
+        { name: '轻松', balls: 5, grav: 620, cool: 3.0, charge: 2.6 },
+        { name: '标准', balls: 3, grav: 700, cool: 4.0, charge: 3.6 },
+        { name: '挑战', balls: 2, grav: 800, cool: 5.5, charge: 4.6 }
+      ];
 
       // 台面几何
       var WALL_L = 12, WALL_R = 408;
@@ -47,6 +53,7 @@
 
       var ball, leftF, rightF, balls, score, state, combo, comboT, t, last;
       var acc, particles, trail, shake, flash, stuckT, readyT, power, over;
+      var TOTALBALLS = 3, CHARGE = 3.6, TARGET_DUR = 4;
       var syncScore = -1, syncCombo = -1;
 
       /* ------------------------ 挡板 ------------------------ */
@@ -82,10 +89,16 @@
         rightF = mkFlipper(288, 556, 70, 30 * Math.PI / 180, -30 * Math.PI / 180, -1);
         flipperTip(leftF); flipperTip(rightF);
 
-        balls = BALLS;
+        var c = lvBar.lv();
+        GRAV = c.grav;
+        TOTALBALLS = c.balls;
+        balls = TOTALBALLS;
         score = 0;
         combo = 0; comboT = 0;
         t = 0; last = 0; acc = 0; shake = 0; flash = 0;
+        CHARGE = c.charge;
+        TARGET.cool = 0;
+        TARGET_DUR = c.cool;
         stunClear();
         particles = []; trail = [];
         power = 0; readyT = 0; over = false;
@@ -104,7 +117,7 @@
       }
 
       function syncStatus() {
-        api.setStatus('得分 ' + api.fmtNum(score) + ' · 弹珠 ' + balls + '/3' +
+        api.setStatus('得分 ' + api.fmtNum(score) + ' · 弹珠 ' + balls + '/' + TOTALBALLS +
           (combo > 1 ? ' · COMBO x' + Math.min(combo, 5) : ''));
       }
 
@@ -235,7 +248,7 @@
       function physics(dt) {
         if (state === 'ready') {
           readyT += dt;
-          power = (Math.sin(readyT * 3.6) + 1) / 2;     // 弹簧蓄力条往复
+          power = (Math.sin(readyT * CHARGE) + 1) / 2;     // 弹簧蓄力条往复
           ball.x = (LANE_X + WALL_R) / 2;
           ball.y = 600;
           return;
@@ -552,8 +565,13 @@
         }
       });
 
+      /* ------------------------ 难度（持久化） ------------------------ */
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
+      });
+
       reset();
-      api.setStatus('得分 0 · 弹珠 3/3');
       api.hint('按住 <b style="color:#d93d59">←</b> / <b style="color:#d93d59">→</b> 抬起挡板；' +
         '撞缓冲柱有连击加成，顶部金色目标 <b>+500</b>。');
 

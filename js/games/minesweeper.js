@@ -27,7 +27,6 @@
     touch: 'tap',
 
     mount: function (root, api) {
-      var levelIdx = 0;
       var n = 9, mineCount = 10, base = 1200;
       var mine, open, flag, num, cellEls;
       var started, over, elapsed, timerId, flagMode = false;
@@ -39,20 +38,18 @@
       root.appendChild(board);
 
       /* ---------------- 难度 / 标记模式 ---------------- */
-      var bar = api.ctrlBar();
-      var diffBtns = [];
-      LEVELS.forEach(function (lv, i) {
-        var b = U.el('button', 'chip' + (i === levelIdx ? ' is-active' : ''), lv.name);
-        b.type = 'button';
-        b.addEventListener('click', function () {
-          if (i === levelIdx) return;   // 重复点当前难度不重开
-          GH.Audio.play('select');
-          reset(i);
-        });
-        diffBtns.push(b);
-        bar.appendChild(b);
+      var lvBar = api.levelBar({
+        levels: LEVELS,
+        label: '难度',
+        dflt: 0,
+        onPick: function (idx) {
+          levelIdx = idx;
+          reset(idx);
+        }
       });
+      var levelIdx = lvBar.cur();
 
+      var bar = api.ctrlBar();
       var flagBtn = U.el('button', 'chip', '🚩 标记模式');
       flagBtn.type = 'button';
       flagBtn.addEventListener('click', function () {
@@ -169,8 +166,6 @@
           flag.push(fill(false));
           num.push(fill(0));
         }
-        diffBtns.forEach(function (b, i) { b.classList.toggle('is-active', i === levelIdx); });
-
         buildBoard();
         api.setScore(0);
 
@@ -346,7 +341,7 @@
       api.on(board, 'pointerleave', cancelPress);
 
       /* ---------------- 启动 ---------------- */
-      reset(0);
+      reset();
       api.hint('数字表示周围 8 格的雷数；右键 / 长按插旗，手机可先开 <b style="color:#0d95ab">标记模式</b> 再点击插旗。');
 
       return {

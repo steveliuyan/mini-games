@@ -55,6 +55,14 @@
       var phase, dropAcc, lockAcc, lockResets, clearRows, clearT, held, tiles;
       var lastT = 0;                 // 上一帧时间戳（用于帧率无关的推进）
       var dasT = 0, dasDir = 0, dasStarted = false;      // 左右长按自动重复
+      var trailFx = [], lockFx = [], particles = [], overT = 0, overDone = false;
+
+      /* 难度：重力曲线（起始 ms/格 → 每级递减 → 下限） */
+      var LV = [
+        { name: '轻松', start: 950, step: 48, min: 150 },
+        { name: '标准', start: 800, step: 62, min: 90 },
+        { name: '挑战', start: 640, step: 70, min: 62 }
+      ];
 
       /* ---------------- 下一个方块预览（DOM，置于画布上方） ---------------- */
       var nextWrap = U.el('div');
@@ -136,8 +144,11 @@
         return cur ? collide(cur.rot, cur.x, cur.y + 1) : false;
       }
 
-      function baseGravityMs() { return Math.max(70, 800 - (level - 1) * 62); }
-      function gravityMs() { return held.down ? 45 : baseGravityMs(); }
+      function baseGravityMs() {
+        var c = lvBar.lv();
+        return Math.max(c.min, c.start - (level - 1) * c.step);
+      }
+      function gravityMs() { return held.down ? Math.max(40, baseGravityMs() * 0.12) : baseGravityMs(); }
 
       function updateStatus() {
         api.setStatus('等级 ' + level + ' · 已消 ' + lines + ' 行 · 下落 ' +
@@ -220,6 +231,7 @@
         if (phase !== 'play' || !cur) return;
         if (collide(cur.rot, cur.x + dx, cur.y)) { api.audio.play('tick'); return; }
         cur.x += dx;
+        if (cur.vx !== undefined) cur.vx -= dx;   // 渲染从旧位置滑到新位置
         api.audio.play('move');
         resetLock();
       }
@@ -230,7 +242,9 @@
         for (var i = 0; i < KICKS.length; i++) {
           var nx = cur.x + KICKS[i][0], ny = cur.y + KICKS[i][1];
           if (!collide(nr, nx, ny)) {
-            cur.rot = nr; cur.x = nx; cur.y = ny;
+            cur.rot = nr;
+            if (cur.vx !== undefined) { cur.vx -= (nx - cur.x); cur.vy -= (ny - cur.y); }
+            cur.x = nx; cur.y = ny;
             api.audio.play('flip');
             resetLock();
             return;
@@ -243,6 +257,7 @@
         if (!cur) return false;
         if (collide(cur.rot, cur.x, cur.y + 1)) return false;
         cur.y++;
+        if (cur.vy !== undefined) cur.vy -= 1;   // 平滑下落：渲染偏移 +1 格后衰减
         if (soft) api.addScore(1);   // 软降 +1/格
         return true;
       }
@@ -250,8 +265,17 @@
       function hardDrop() {
         if (phase !== 'play' || !cur) return;
         var d = 0;
+        var cs0 = SHAPES[cur.pi][cur.rot], col0 = PIECES[cur.pi].c;
+        var startY = cur.y;
         while (!collide(cur.rot, cur.x, cur.y + 1)) { cur.y++; d++; }
-        if (d) api.addScore(d * 2);  // 硬降 +2/格
+        if (d) {
+          api.addScore(d * 2);  // 硬降 +2/格
+          // 拖尾：起点到落点之间的半透明残影
+          for (var s = 0; s < d; s++) {
+            trailFx.push({ y: startY + s, t: 1, color: col0, cells: cs0.map(function (c) { return [cur.x + c[0], c[1]]; }) });
+          }
+          cur.vy = 0;           // 硬降不做逐格插值（已是瞬移）
+        }
         api.audio.play('hit');
         lockPiece();
       }
@@ -311,17 +335,24 @@
       function gameOver() {
         if (phase === 'over') return;
         phase = 'over';
+        overT = 0;
+        overDone = false;
         api.audio.play('lose');
-        api.finish({
-          title: '游戏结束',
-          sub: '方块堆到顶了 · 消除 ' + lines + ' 行 · 到达等级 ' + level,
-          icon: '🧱',
-          metrics: { tetris_lines: lines }
-        });
+        // 死亡演出：整堆方块抖动渐红，0.75s 后弹结算
+        api.timeout(function () {
+          if (overDone || api.isFinished()) return;
+          overDone = true;
+          api.finish({
+            title: '游戏结束',
+            sub: '方块堆到顶了 · 消除 ' + lines + ' 行 · 到达等级 ' + level,
+            icon: '🧱',
+            metrics: { tetris_lines: lines }
+          });
+        }, 750);
       }
 
       /* ---------------- 绘制 ---------------- */
-      function draw() {
+      function draw(dtS) {
         ctx.fillStyle = '#f3f6fc';
         ctx.fillRect(0, 0, W, H);
 
@@ -342,14 +373,51 @@
           ctx.stroke();
         }
 
-        // 已固定的方块
+        // 已固定的方块（死亡时整堆下坠+渐红）
+        var overShake = phase === 'over' ? Math.min(1, overT * 1.4) : 0;
         for (r = 0; r < ROWS; r++) {
           for (c = 0; c < COLS; c++) {
-            if (grid[r][c]) ctx.drawImage(tile(grid[r][c]), c * CELL, r * CELL, CELL, CELL);
+            if (!grid[r][c]) continue;
+            var oy = 0;
+            if (overShake > 0) {
+              oy = overShake * overShake * (r + 2) * 2.2;
+              ctx.globalAlpha = Math.max(0, 1 - overShake * 0.5);
+            }
+            ctx.drawImage(tile(grid[r][c]), c * CELL, r * CELL + oy, CELL, CELL);
+            if (overShake > 0) {
+              ctx.globalAlpha = overShake * 0.35;
+              ctx.fillStyle = '#d93d59';
+              ctx.fillRect(c * CELL, r * CELL + oy, CELL, CELL);
+              ctx.globalAlpha = 1;
+            }
           }
         }
 
-        // 幽灵落点 + 当前方块
+        // 锁定闪光（贴地瞬间的白色高亮衰减）
+        for (var lf = lockFx.length - 1; lf >= 0; lf--) {
+          var f = lockFx[lf];
+          f.t -= dtS * 4.5;
+          if (f.t <= 0) { lockFx.splice(lf, 1); continue; }
+          ctx.globalAlpha = f.t * 0.55;
+          ctx.fillStyle = '#ffffff';
+          rr2(f.x * CELL + 2, f.y * CELL + 2, CELL - 4, CELL - 4);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        // 硬降拖尾
+        for (var tf = trailFx.length - 1; tf >= 0; tf--) {
+          var tr = trailFx[tf];
+          tr.t -= dtS * 5;
+          if (tr.t <= 0) { trailFx.splice(tf, 1); continue; }
+          ctx.globalAlpha = tr.t * 0.22;
+          for (var q = 0; q < tr.cells.length; q++) {
+            ctx.drawImage(tile(tr.color), tr.cells[q][0] * CELL, tr.cells[q][1] * CELL, CELL, CELL);
+          }
+          ctx.globalAlpha = 1;
+        }
+
+        // 幽灵落点 + 当前方块（带渲染位移插值）
         if (cur && phase === 'play') {
           var gy = cur.y;
           while (!collide(cur.rot, cur.x, gy + 1)) gy++;
@@ -362,35 +430,57 @@
           ctx.globalAlpha = 1;
 
           var cs = SHAPES[cur.pi][cur.rot], ccol = PIECES[cur.pi].c;
+          var offX = (cur.vx || 0) * CELL;
+          var offY = (cur.vy || 0) * CELL;
           for (var j = 0; j < cs.length; j++) {
             var cy = cur.y + cs[j][1];
-            if (cy >= 0) ctx.drawImage(tile(ccol), (cur.x + cs[j][0]) * CELL, cy * CELL, CELL, CELL);
+            if (cy >= 0) ctx.drawImage(tile(ccol), (cur.x + cs[j][0]) * CELL + offX, cy * CELL + offY, CELL, CELL);
           }
         }
 
-        // 消行闪白
+        // 消行闪白 + 上下挤压
         if (phase === 'clearing' && clearRows.length) {
           var k = 1 - clearT / (CLEAR_MS / 1000);
           ctx.globalAlpha = 0.15 + 0.75 * Math.sin(Math.PI * U.clamp(k, 0, 1));
           ctx.fillStyle = '#fbbf24';
           for (var m = 0; m < clearRows.length; m++) {
-            ctx.fillRect(0, clearRows[m] * CELL, W, CELL);
+            var sq = 1 - Math.sin(Math.PI * U.clamp(k, 0, 1)) * 0.4;
+            ctx.fillRect(0, clearRows[m] * CELL + CELL * (1 - sq) / 2, W, CELL * sq);
           }
           ctx.globalAlpha = 1;
         }
+
+        // 消行粒子
+        for (var p = particles.length - 1; p >= 0; p--) {
+          var pt = particles[p];
+          pt.x += pt.vx * dtS; pt.y += pt.vy * dtS;
+          pt.vy += 340 * dtS;
+          pt.life -= dtS * 1.6;
+          if (pt.life <= 0) { particles.splice(p, 1); continue; }
+          ctx.globalAlpha = pt.life;
+          ctx.fillStyle = pt.color;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 3.5 * pt.life + 1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
 
         // 外框
         ctx.strokeStyle = phase === 'over' ? 'rgba(217,61,89,.55)' : 'rgba(47,107,255,.32)';
         ctx.lineWidth = 3;
         ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
       }
+      function rr2(x, y, w, h) { U.rr(ctx, x, y, w, h, 6); }
 
       /* ---------------- 主循环 ---------------- */
       api.loop(function () {
         // 真实时间步长：120/144Hz 屏幕不会让方块掉得更快
         var now = performance.now();
         var dtMs = lastT ? Math.min(100, Math.max(0, now - lastT)) : DT;
+        var dtS = dtMs / 1000;
         lastT = now;
+
+        if (phase === 'over') overT += dtS;
 
         if (!api.isPaused()) {
           // 左右长按自动重复：首次 170ms 后以 45ms 间隔连移
@@ -405,7 +495,7 @@
           }
 
           if (phase === 'clearing') {
-            clearT -= dtMs / 1000;
+            clearT -= dtS;
             if (clearT <= 0) finishClear();
           } else if (phase === 'play') {
             dropAcc += dtMs;
@@ -425,7 +515,17 @@
             }
           }
         }
-        draw();
+
+        // 渲染位移衰减（帧率无关的指数平滑 → 移动/下落/旋转都带滑行感）
+        if (cur) {
+          var k = 1 - Math.exp(-16 * dtS);
+          cur.vx -= cur.vx * k;
+          cur.vy -= cur.vy * k;
+          if (Math.abs(cur.vx) < 0.004) cur.vx = 0;
+          if (Math.abs(cur.vy) < 0.004) cur.vy = 0;
+        }
+
+        draw(dtS);
       });
 
       /* ---------------- 输入 ---------------- */
@@ -442,6 +542,12 @@
           // 松开任一方向键即停止连移
           if (dasDir === (name === 'left' ? -1 : 1)) dasDir = 0;
         }
+      });
+
+      /* ---------------- 难度（持久化） ---------------- */
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
       });
 
       reset();

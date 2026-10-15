@@ -29,6 +29,14 @@
       var PIPE_W = 62, SPACING = 210;
 
       var state, bird, pipes, score, groundX, cloudX, clouds, flash, over, t, last;
+      var scorePop = 0, particles = [];
+
+      /* 难度：间隙起点/下限/收窄速度、管速曲线 */
+      var LV = [
+        { name: '轻松', gap0: 182, gapMin: 148, gapK: 1.2, sp0: 122, spK: 1.7, spMax: 200 },
+        { name: '标准', gap0: 168, gapMin: 124, gapK: 1.8, sp0: 138, spK: 2.2, spMax: 238 },
+        { name: '挑战', gap0: 150, gapMin: 108, gapK: 2.2, sp0: 158, spK: 2.8, spMax: 276 }
+      ];
 
       function reset() {
         state = 'ready';
@@ -43,22 +51,26 @@
         }
         flash = 0;
         over = false;
+        scorePop = 0;
+        particles = [];
         t = 0; last = 0;
         api.setScore(0);
         syncStatus();
       }
 
       function syncStatus() {
-        api.setStatus(state === 'ready' ? '准备开始 · 点击起飞'
+        api.setStatus(state === 'ready' ? '准备开始 · 点击起飞 · 难度「' + lvBar.lv().name + '」'
           : (state === 'play' ? '已通过 ' + score + ' 根管道' : '结束 · 通过 ' + score + ' 根'));
       }
 
       function gapSize() {
-        return Math.max(124, 168 - score * 1.8);   // 间隙随分数收窄（下限 124px 仍可从容通过）
+        var c = lvBar.lv();
+        return Math.max(c.gapMin, c.gap0 - score * c.gapK);   // 间隙随分数收窄
       }
 
       function pipeSpeed() {
-        return Math.min(238, 138 + score * 2.2);
+        var c = lvBar.lv();
+        return Math.min(c.spMax, c.sp0 + score * c.spK);
       }
 
       function spawnPipe() {
@@ -81,14 +93,23 @@
         api.audio.play('flap');
       }
 
+      function burst(x, y, color, n) {
+        for (var i = 0; i < n; i++) {
+          var a = Math.PI * 2 * i / n + Math.random() * 0.8;
+          var sp = api.randFloat(30, 110);
+          particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 30, life: 1, color: color });
+        }
+      }
+
       function die(reason) {
         if (state !== 'play') return;
         state = 'over';
         over = true;
         flash = 1;
         api.audio.play('lose');
+        burst(bird.x, bird.y, '#fbbf24', 12);
         api.setStatus('结束 · 通过 ' + score + ' 根');
-        // 小延迟让撞击闪光可见
+        // 坠落动画 + 撞击闪光后弹结算
         api.timeout(function () {
           api.finish({
             title: '撞毁！',
@@ -96,10 +117,17 @@
             icon: '🐤',
             metrics: { flappy_pipes: score }
           });
-        }, 420);
+        }, 680);
       }
 
       function update(dt) {
+        if (scorePop > 0) scorePop = Math.max(0, scorePop - dt * 3.4);
+        for (var pi2 = particles.length - 1; pi2 >= 0; pi2--) {
+          var pp = particles[pi2];
+          pp.x += pp.vx * dt; pp.y += pp.vy * dt;
+          pp.vy += 300 * dt; pp.life -= dt * 1.8;
+          if (pp.life <= 0) particles.splice(pi2, 1);
+        }
         var sp = state === 'play' ? pipeSpeed() : 60;
         groundX = (groundX - sp * dt) % 48;
         cloudX -= 12 * dt;
@@ -144,6 +172,8 @@
             score++;
             api.addScore(1);
             api.audio.play('score');
+            scorePop = 1;
+            burst(bird.x + 20, bird.y, '#22c55e', 7);
             syncStatus();
           }
           if (pip.x < -PIPE_W - 30) pipes.splice(p, 1);
@@ -263,17 +293,33 @@
 
         drawBird();
 
-        // 分数
-        U.label(ctx, String(score), W / 2, 76, {
+        // 穿管粒子
+        for (var pt2 = 0; pt2 < particles.length; pt2++) {
+          var pe = particles[pt2];
+          ctx.globalAlpha = Math.max(0, pe.life);
+          ctx.fillStyle = pe.color;
+          ctx.beginPath();
+          ctx.arc(pe.x, pe.y, 2 + 3 * pe.life, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        // 分数（得分瞬间弹跳）
+        var spv = 1 + (scorePop > 0 ? U.ease.outQuad(scorePop) * 0.35 : 0);
+        ctx.save();
+        ctx.translate(W / 2, 76);
+        ctx.scale(spv, spv);
+        U.label(ctx, String(score), 0, 0, {
           font: 'bold 54px ' + U.FONT, fill: '#ffffff', stroke: 'rgba(30,58,95,.85)',
           lineWidth: 6
         });
+        ctx.restore();
 
         if (state === 'ready') {
           U.label(ctx, '点击开始', W / 2, 330, {
             font: 'bold 24px ' + U.FONT, fill: '#ffffff', stroke: 'rgba(30,58,95,.8)'
           });
-          U.label(ctx, '穿过管道间隙 +1 分', W / 2, 366, {
+          U.label(ctx, '难度「' + lvBar.lv().name + '」· 穿过管道间隙 +1 分', W / 2, 366, {
             font: 'bold 15px ' + U.FONT, fill: 'rgba(30,58,95,.78)'
           });
         }
@@ -299,6 +345,12 @@
       api.onKey(function (name, e, phase) {
         if (phase !== 'down') return;
         if (name === 'space' || name === 'enter' || name === 'tap' || name === 'up') flap();
+      });
+
+      /* ------------------------ 难度（持久化） ------------------------ */
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
       });
 
       reset();

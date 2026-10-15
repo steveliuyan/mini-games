@@ -19,7 +19,6 @@
     { id: 3, name: '困难' }
   ];
 
-  var level = 2;      // 难度（跨重开保留）
   var streak = 0;     // 连胜次数（跨重开保留）
 
   /* ---------------- 纯算法 ---------------- */
@@ -283,21 +282,17 @@
       });
 
       /* ---------------- 控件 ---------------- */
-      var bar = api.ctrlBar();
-      var chips = [];
-      LEVELS.forEach(function (lv) {
-        var b = U.el('button', 'chip' + (lv.id === level ? ' is-active' : ''), lv.name);
-        b.type = 'button';
-        b.addEventListener('click', function () {
+      var lvBar = api.levelBar({
+        levels: LEVELS,
+        label: '难度',
+        dflt: 1,
+        onPick: function (idx, lv) {
           level = lv.id;
-          chips.forEach(function (o) { o.el.classList.toggle('is-active', o.id === level); });
-          api.audio.play('select');
-          api.toast('难度：' + lv.name + (lv.id === 3 ? '（AI 不会失误）' : ''), { icon: '🎚️' });
-        });
-        chips.push({ id: lv.id, el: b });
-        bar.appendChild(b);
+        }
       });
+      var level = lvBar.lv().id;
 
+      var bar = api.ctrlBar();
       var again = U.el('button', 'chip', '重开');
       again.type = 'button';
       again.addEventListener('click', function () {

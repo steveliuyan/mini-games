@@ -1,5 +1,6 @@
 /* ===========================================================
    snake.js — 贪吃蛇（Canvas 样板游戏）
+   渲染插值平滑移动 + 吃果挤压/粒子 + 死亡逐段变红演出 + 难度持久化
    =========================================================== */
 (function (GH) {
   'use strict';
@@ -22,18 +23,19 @@
       var ctx = g.ctx;
       var rr = U.rr;
 
-      /* 速度档位：base = 起始每格毫秒，accel = 每吃一个果子提速的毫秒，min = 上限速度 */
-      var SPEEDS = {
-        easy:   { base: 235, accel: 3.0, min: 100, label: '轻松' },
-        normal: { base: 185, accel: 3.2, min: 82,  label: '标准' },
-        hard:   { base: 145, accel: 3.2, min: 70,  label: '挑战' }
-      };
-      var speedKey = 'normal';
+      /* 难度档位：base = 起始每格毫秒，accel = 每吃一个果子提速的毫秒，min = 上限速度 */
+      var LV = [
+        { name: '轻松', base: 235, accel: 3.0, min: 100 },
+        { name: '标准', base: 185, accel: 3.2, min: 82 },
+        { name: '挑战', base: 145, accel: 3.2, min: 70 }
+      ];
 
-      var snake, dir, queue, food, alive, phase, acc, foodEaten, particles, flash, t, lastT;
+      var snake, prev, dir, queue, food, alive, phase, acc, foodEaten;
+      var particles, flash, t, lastT, deathT, reported, squash, foodPop, deathReason;
 
       function reset() {
         snake = [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }];
+        prev = snake.map(function (s) { return { x: s.x, y: s.y }; });
         dir = { x: 1, y: 0 };
         queue = [];
         alive = true;
@@ -42,6 +44,11 @@
         foodEaten = 0;
         particles = [];
         flash = 0;
+        deathT = 0;
+        reported = false;
+        squash = 0;
+        foodPop = 0;
+        deathReason = '';
         t = 0;
         lastT = 0;
         placeFood();
@@ -50,17 +57,17 @@
       }
 
       function stepMs() {
-        var sp = SPEEDS[speedKey];
+        var sp = lvBar.lv();
         return Math.max(sp.min, sp.base - foodEaten * sp.accel);
       }
 
       function syncStatus() {
         if (phase === 'ready') {
-          api.setStatus('按方向键开始 · 速度「' + SPEEDS[speedKey].label + '」');
+          api.setStatus('按方向键开始 · 难度「' + lvBar.lv().name + '」');
           return;
         }
         api.setStatus('长度 ' + snake.length + ' · 速度 ' + (foodEaten + 1) + ' 档 · ' +
-          SPEEDS[speedKey].label + '（' + Math.round(stepMs()) + 'ms/格）');
+          lvBar.lv().name + '（' + Math.round(stepMs()) + 'ms/格）');
       }
 
       function placeFood() {
@@ -105,6 +112,7 @@
           if (snake[i].x === head.x && snake[i].y === head.y) return die('咬到自己了');
         }
 
+        prev = snake.map(function (s) { return { x: s.x, y: s.y }; });
         snake.unshift(head);
 
         if (head.x === food.x && head.y === food.y) {
@@ -112,7 +120,9 @@
           api.addScore(10);
           api.audio.play('eat');
           burst(head.x, head.y);
+          squash = 1;
           placeFood();
+          foodPop = 1;
           syncStatus();
         } else {
           snake.pop();
@@ -120,33 +130,62 @@
       }
 
       function die(reason) {
+        if (!alive) return;
         alive = false;
         flash = 1;
+        deathReason = reason;
         api.audio.play('lose');
-        api.finish({
-          title: '游戏结束',
-          sub: reason + ' · 长度 ' + snake.length + ' · 吃掉 ' + foodEaten + ' 个果子',
-          icon: '💥',
-          metrics: { snake_len: snake.length, snake_food: foodEaten }
-        });
+        // 死亡粒子（绿色身体炸散）
+        for (var i = 0; i < Math.min(snake.length, 40); i++) {
+          var s = snake[i];
+          var a = Math.random() * Math.PI * 2;
+          var sp = api.randFloat(30, 130);
+          particles.push({
+            x: s.x * CELL + CELL / 2, y: s.y * CELL + CELL / 2,
+            vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40,
+            life: 1, red: false
+          });
+        }
+        // 死亡演出：逐段变红抖动 ~0.7s 后再弹结算框
+        api.timeout(function () {
+          if (reported || api.isFinished()) return;
+          reported = true;
+          api.finish({
+            title: '游戏结束',
+            sub: deathReason + ' · 长度 ' + snake.length + ' · 吃掉 ' + foodEaten + ' 个果子',
+            icon: '💥',
+            metrics: { snake_len: snake.length, snake_food: foodEaten }
+          });
+        }, 700);
       }
 
       function burst(gx, gy) {
         for (var i = 0; i < 12; i++) {
           var a = (Math.PI * 2 * i) / 12 + Math.random() * 0.5;
-          var sp = api.randFloat(0.9, 2.6);
+          var sp = api.randFloat(50, 160);
           particles.push({
             x: gx * CELL + CELL / 2,
             y: gy * CELL + CELL / 2,
-            vx: Math.cos(a) * sp * CELL * 0.06,
-            vy: Math.sin(a) * sp * CELL * 0.06,
-            life: 1
+            vx: Math.cos(a) * sp,
+            vy: Math.sin(a) * sp,
+            life: 1, red: true
           });
         }
       }
 
+      /* 绿→红混合（死亡波浪），k 是身体位置渐变 */
+      function bodyColor(k, redMix) {
+        if (redMix <= 0) {
+          return 'rgb(' + Math.round(16 + 40 * k) + ',' + Math.round(160 - 50 * k) + ',' + Math.round(110 - 20 * k) + ')';
+        }
+        return 'rgb(' +
+          Math.round(U.lerp(16 + 40 * k, 217, redMix)) + ',' +
+          Math.round(U.lerp(160 - 50 * k, 61, redMix)) + ',' +
+          Math.round(U.lerp(110 - 20 * k, 89, redMix)) + ')';
+      }
+
       /* ------------------------ 绘制 ------------------------ */
-      function draw() {
+      function draw(dt) {
         // 背景棋盘
         ctx.fillStyle = '#f3f6fc';
         ctx.fillRect(0, 0, W, H);
@@ -164,9 +203,16 @@
         ctx.lineWidth = 3;
         ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
 
-        // 食物
+        /* 步进进度 → 渲染插值系数（把离散步进平滑成连续滑动） */
+        var alpha = 1;
+        if (alive && phase === 'play') alpha = U.clamp(acc / stepMs(), 0, 1);
+        alpha = U.ease.outQuad(alpha);
+
+        // 食物（出场弹跳 + 呼吸脉冲）
         if (food) {
-          var pulse = 1 + Math.sin(t * 7) * 0.12;
+          if (foodPop > 0) foodPop = Math.max(0, foodPop - dt * 3.2);
+          var pop = foodPop > 0 ? U.ease.outBack(1 - foodPop) : 1;
+          var pulse = 1 + Math.sin(t * 7) * 0.10;
           var fx = food.x * CELL + CELL / 2;
           var fy = food.y * CELL + CELL / 2;
           ctx.save();
@@ -174,36 +220,53 @@
           ctx.shadowBlur = 16;
           ctx.fillStyle = '#e2415c';
           ctx.beginPath();
-          ctx.arc(fx, fy, CELL * 0.3 * pulse, 0, Math.PI * 2);
+          ctx.arc(fx, fy, CELL * 0.3 * pulse * pop, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
           ctx.fillStyle = 'rgba(255,255,255,.75)';
           ctx.beginPath();
-          ctx.arc(fx - CELL * 0.09, fy - CELL * 0.11, CELL * 0.075, 0, Math.PI * 2);
+          ctx.arc(fx - CELL * 0.09, fy - CELL * 0.11, CELL * 0.075 * pop, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        // 蛇身
+        // 吃果挤压（头部瞬间放大回弹）
+        if (squash > 0) squash = Math.max(0, squash - dt * 4.2);
+        var headScale = squash > 0 ? 1 + U.ease.outQuad(squash) * 0.26 : 1;
+
+        // 蛇身（prev→cur 插值滑动；死亡逐段变红抖动）
+        var waveT = alive ? 0 : deathT * 3.4;
         for (var i = snake.length - 1; i >= 0; i--) {
           var s = snake[i];
+          var pv = (prev[i] != null) ? prev[i] : s;
           var k = i / Math.max(1, snake.length - 1);
           var pad = i === 0 ? 1.5 : 2.5;
-          var x = s.x * CELL + pad;
-          var y = s.y * CELL + pad;
+          var gx = U.lerp(pv.x, s.x, alpha);
+          var gy = U.lerp(pv.y, s.y, alpha);
+          var redMix = 0, jitterX = 0, jitterY = 0;
+          if (!alive) {
+            redMix = U.clamp(waveT - i * 0.14, 0, 1);
+            var jt = Math.max(0, 1 - deathT * 1.6);
+            jitterX = Math.sin(deathT * 46 - i * 1.3) * 2.2 * jt;
+            jitterY = Math.cos(deathT * 41 - i) * 2.2 * jt;
+          }
+          var x = gx * CELL + pad + jitterX;
+          var y = gy * CELL + pad + jitterY;
           var w = CELL - pad * 2;
 
           if (i === 0) {
+            var hs = w * headScale;
+            var hx = x - (hs - w) / 2;
+            var hy = y - (hs - w) / 2;
             ctx.save();
-            ctx.shadowColor = 'rgba(15,154,108,.7)';
+            ctx.shadowColor = redMix > .5 ? 'rgba(217,61,89,.7)' : 'rgba(15,154,108,.7)';
             ctx.shadowBlur = 14;
-            ctx.fillStyle = '#0f9a6c';
-            rr(ctx, x, y, w, w, 7);
+            ctx.fillStyle = redMix > 0 ? bodyColor(0, redMix) : '#0f9a6c';
+            rr(ctx, hx, hy, hs, hs, 7);
             ctx.fill();
             ctx.restore();
-            drawEyes(x, y, w);
+            drawEyes(hx, hy, hs);
           } else {
-            var c = Math.round(110 - 20 * k);
-            ctx.fillStyle = 'rgb(' + Math.round(16 + 40 * k) + ',' + Math.round(160 - 50 * k) + ',' + c + ')';
+            ctx.fillStyle = bodyColor(k, redMix);
             ctx.globalAlpha = 0.55 + 0.45 * (1 - k);
             rr(ctx, x, y, w, w, 6);
             ctx.fill();
@@ -211,15 +274,15 @@
           }
         }
 
-        // 粒子
+        // 粒子（速度单位 px/秒，dt 推进，帧率无关）
         for (var p = particles.length - 1; p >= 0; p--) {
           var pt = particles[p];
-          pt.x += pt.vx; pt.y += pt.vy;
-          pt.vy += 0.06;
-          pt.life -= 0.035;
+          pt.x += pt.vx * dt; pt.y += pt.vy * dt;
+          pt.vy += 260 * dt;
+          pt.life -= dt * 1.9;
           if (pt.life <= 0) { particles.splice(p, 1); continue; }
           ctx.globalAlpha = pt.life;
-          ctx.fillStyle = '#e2415c';
+          ctx.fillStyle = pt.red ? '#e2415c' : '#0f9a6c';
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, 3 * pt.life + 1, 0, Math.PI * 2);
           ctx.fill();
@@ -228,9 +291,9 @@
 
         // 死亡闪红
         if (flash > 0) {
-          ctx.fillStyle = 'rgba(217,61,89,' + (flash * 0.32) + ')';
+          ctx.fillStyle = 'rgba(217,61,89,' + (flash * 0.30) + ')';
           ctx.fillRect(0, 0, W, H);
-          flash -= 0.03;
+          flash = Math.max(0, flash - dt * 1.6);
         }
 
         // 开局待命提示
@@ -242,7 +305,7 @@
           U.label(ctx, '按方向键开始', W / 2, H / 2 - 8, {
             font: 'bold 26px system-ui, sans-serif', fill: '#0f9a6c', align: 'center', baseline: 'middle'
           });
-          U.label(ctx, '速度：' + SPEEDS[speedKey].label, W / 2, H / 2 + 26, {
+          U.label(ctx, '难度：' + lvBar.lv().name, W / 2, H / 2 + 26, {
             font: '14px system-ui, sans-serif', fill: '#6e7b96', align: 'center', baseline: 'middle'
           });
           ctx.globalAlpha = 1;
@@ -269,6 +332,7 @@
         var dt = lastT ? Math.min(0.1, Math.max(0, (now - lastT) / 1000)) : 1 / 60;
         lastT = now;
         t += dt;
+        if (!alive) deathT += dt;
 
         if (!api.isPaused() && alive && phase === 'play') {
           acc += dt * 1000;
@@ -282,7 +346,7 @@
           }
           if (guard >= 5) acc = 0;   // 极端卡顿后不补偿，避免连跳
         }
-        draw();
+        draw(dt);
       });
 
       /* ------------------------ 输入 ------------------------ */
@@ -294,22 +358,10 @@
         else if (name === 'right') turn(1, 0);
       });
 
-      /* ------------------------ 速度档位按钮 ------------------------ */
-      var bar = api.ctrlBar();
-      var chipEls = {};
-      ['easy', 'normal', 'hard'].forEach(function (k) {
-        var b = U.el('button', 'chip' + (k === speedKey ? ' is-active' : ''), SPEEDS[k].label);
-        b.type = 'button';
-        b.addEventListener('click', function () {
-          api.audio.play('click');
-          speedKey = k;
-          for (var q in chipEls) {
-            if (chipEls.hasOwnProperty(q)) chipEls[q].classList.toggle('is-active', q === k);
-          }
-          reset();
-        });
-        chipEls[k] = b;
-        bar.appendChild(b);
+      /* ------------------------ 难度（持久化） ------------------------ */
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
       });
 
       reset();

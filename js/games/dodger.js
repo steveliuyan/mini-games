@@ -27,9 +27,16 @@
       var SHIP_Y = H - 74, SHIP_R = 13;
       var HOLD_SPEED = 360, STEP = 26, LERP_RATE = 20;
 
+      /* 难度：下落速度曲线 / 生成间隔下限 / 横梁缺口 */
+      var LV = [
+        { name: '轻松', v0: 100, vK: 5.0, vMax: 270, g0: 0.98, gMin: 0.5, gap0: 168, gapMin: 145 },
+        { name: '标准', v0: 118, vK: 6.5, vMax: 330, g0: 0.86, gMin: 0.38, gap0: 152, gapMin: 128 },
+        { name: '挑战', v0: 142, vK: 8.2, vMax: 420, g0: 0.72, gMin: 0.3, gap0: 138, gapMin: 112 }
+      ];
+
       var ship, targetX, held, obs, items, stars, flames, popups, boom;
       var elapsed, scoreShown, ptsAcc, shieldT, slowT, spawnT, barT;
-      var alive, flash, shake, t, last;
+      var alive, flash, shake, t, last, dieReported;
 
       function reset() {
         ship = { x: W / 2, y: SHIP_Y };
@@ -45,7 +52,7 @@
         }
         elapsed = 0; scoreShown = 0; ptsAcc = 0;
         shieldT = 0; slowT = 0; spawnT = 0.7; barT = 9;
-        alive = true; flash = 0; shake = 0; boom = 0;
+        alive = true; flash = 0; shake = 0; boom = 0; dieReported = false;
         t = 0; last = 0;
         dragging = false;
         api.setScore(0);
@@ -53,9 +60,14 @@
       }
 
       /* ------------------------ 难度曲线 ------------------------ */
-      // 放慢爬升、抬高下限间隔，让普通玩家能稳定撑到 30 秒以上
-      function fallSpeed() { return Math.min(330, 118 + elapsed * 6.5); }
-      function spawnGap() { return Math.max(0.38, 0.86 - elapsed * 0.009); }
+      function fallSpeed() {
+        var c = lvBar.lv();
+        return Math.min(c.vMax, c.v0 + elapsed * c.vK);
+      }
+      function spawnGap() {
+        var c = lvBar.lv();
+        return Math.max(c.gMin, c.g0 - elapsed * 0.009);
+      }
 
       function spawnObstacle() {
         // 12 秒后开始出现带缺口的横梁
@@ -126,12 +138,25 @@
             life: 1, size: api.randFloat(2, 5)
           });
         }
-        api.finish({
-          title: '飞船坠毁',
-          sub: '存活 ' + Math.floor(elapsed) + ' 秒',
-          icon: '💥',
-          metrics: { dodger_time: Math.floor(elapsed) }
-        });
+        for (var i = 0; i < 26; i++) {
+          var a = Math.PI * 2 * i / 26;
+          var sp = api.randFloat(60, 300);
+          flames.push({
+            x: ship.x, y: ship.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 1, size: api.randFloat(2, 5)
+          });
+        }
+        // 坠毁演出：爆炸+慢镜头 0.9s 后再弹结算
+        api.timeout(function () {
+          if (dieReported || api.isFinished()) return;
+          dieReported = true;
+          api.finish({
+            title: '飞船坠毁',
+            sub: '存活 ' + Math.floor(elapsed) + ' 秒 · 难度「' + lvBar.lv().name + '」',
+            icon: '💥',
+            metrics: { dodger_time: Math.floor(elapsed) }
+          });
+        }, 900);
       }
 
       /* ------------------------ 更新 ------------------------ */
@@ -471,6 +496,12 @@
         api.on(window, 'pointerup', onUp),
         api.on(window, 'pointercancel', onUp)
       ];
+
+      /* ------------------------ 难度（持久化） ------------------------ */
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function () { reset(); }
+      });
 
       reset();
       api.setStatus('存活 0 秒 · 得分 0');

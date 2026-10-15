@@ -20,8 +20,6 @@
     { id: 3, name: '困难' }
   ];
 
-  var level = 2;                           // 难度（跨「再来一局」保留）
-
   /* 复用的临时缓冲，减少落叶节点的 GC 压力 */
   var maskBuf = new Array(N * N);
   var lineBuf = [];
@@ -326,13 +324,16 @@
           api.audio.play('tick');
         }
         api.setScore(score);
-        api.finish({
-          win: winner === HUM,
-          title: title,
-          sub: sub,
-          icon: icon,
-          metrics: { gomoku_wins: winner === HUM ? 1 : 0 }
-        });
+        // 先播胜利连线高亮 ~1 秒，再弹结算框
+        api.timeout(function () {
+          api.finish({
+            win: winner === HUM,
+            title: title,
+            sub: sub,
+            icon: icon,
+            metrics: { gomoku_wins: winner === HUM ? 1 : 0 }
+          });
+        }, 1000);
       }
 
       function undo() {
@@ -431,7 +432,7 @@
         ctx.restore();
       }
 
-      function draw() {
+      function draw(dt) {
         if (!bgGrd) {
           bgGrd = ctx.createLinearGradient(0, 0, WORLD, WORLD);
           bgGrd.addColorStop(0, '#f7f1e4');
@@ -495,7 +496,7 @@
         // 棋子
         var keys = Object.keys(anims), n;
         for (n = 0; n < keys.length; n++) {
-          anims[keys[n]] += 0.085;
+          anims[keys[n]] += dt / 0.12;
           if (anims[keys[n]] >= 1) delete anims[keys[n]];
         }
         for (var y = 0; y < N; y++) {
@@ -542,7 +543,7 @@
         var dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 1 / 60;
         lastT = now;
         t += dt;
-        draw();
+        draw(dt);
       });
 
       /* ---------------- 输入 ---------------- */
@@ -567,21 +568,17 @@
       api.on(g.canvas, 'pointerleave', function () { hover = null; });
 
       /* ---------------- 控件 ---------------- */
-      var bar = api.ctrlBar();
-      var chips = [];
-      LEVELS.forEach(function (lv) {
-        var b = U.el('button', 'chip' + (lv.id === level ? ' is-active' : ''), lv.name);
-        b.type = 'button';
-        b.addEventListener('click', function () {
+      var lvBar = api.levelBar({
+        levels: LEVELS,
+        label: '难度',
+        dflt: 1,
+        onPick: function (idx, lv) {
           level = lv.id;
-          chips.forEach(function (o) { o.el.classList.toggle('is-active', o.id === level); });
-          api.audio.play('select');
-          api.toast('难度：' + lv.name, { icon: '🎚️' });
-        });
-        chips.push({ id: lv.id, el: b });
-        bar.appendChild(b);
+        }
       });
+      var level = lvBar.lv().id;
 
+      var bar = api.ctrlBar();
       var undoBtn = U.el('button', 'chip', '悔棋');
       undoBtn.type = 'button';
       undoBtn.addEventListener('click', undo);

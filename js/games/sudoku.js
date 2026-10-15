@@ -83,11 +83,29 @@
     touch: null,
 
     mount: function (root, api) {
-      var idx = NEXT % PUZZLES.length;
+      /* 难度：按题目分层（0=入门/简单，1=中等，2=困难/专家） */
+      var LV = [
+        { name: '轻松', tiers: [0, 1] },
+        { name: '标准', tiers: [2] },
+        { name: '挑战', tiers: [3, 4] }
+      ];
+      var tierIdx = 0;             // 当前层内的第几题
+      var idx = 0;                 // 实际 PUZZLES 下标（由 pickIdx() 计算）
       var sol = [], vals = [], given = [], hintCell = [];
       var nodes = [];
       var selected = -1;
       var errors = 0, hints = 0, sec = 0, done = false;
+
+      function puzzlesOfTier() {
+        var t = LV[lvBar.cur()].tiers;
+        var out = [];
+        for (var i = 0; i < t.length; i++) out.push(t[i]);
+        return out;
+      }
+      function pickIdx() {
+        var t = puzzlesOfTier();
+        return t[tierIdx % t.length];
+      }
 
       /* ---------------- 结构 ---------------- */
       var style = U.el('style');
@@ -99,6 +117,10 @@
 
       api.setStatus('');
 
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 0,
+        onPick: function () { tierIdx = 0; start(); }
+      });
       var bar = api.ctrlBar();
       var hintBtn = U.el('button', 'chip', '💡 提示');
       hintBtn.type = 'button';
@@ -107,15 +129,15 @@
 
       var retry = U.el('button', 'chip', '重开本题');
       retry.type = 'button';
-      retry.addEventListener('click', function () { GH.Audio.play('click'); start(idx); });
+      retry.addEventListener('click', function () { GH.Audio.play('click'); start(); });
       bar.appendChild(retry);
 
       var nextBtn = U.el('button', 'chip', '下一题 →');
       nextBtn.type = 'button';
       nextBtn.addEventListener('click', function () {
         GH.Audio.play('click');
-        NEXT = (idx + 1) % PUZZLES.length;
-        start(NEXT);
+        tierIdx++;
+        start();
       });
       bar.appendChild(nextBtn);
 
@@ -149,8 +171,8 @@
       if (ro) ro.observe(root);
 
       /* ---------------- 开局 ---------------- */
-      function start(i) {
-        idx = i % PUZZLES.length;
+      function start() {
+        idx = pickIdx();
         sol = parse81(PUZZLES[idx].solution);
         vals = parse81(PUZZLES[idx].puzzle);
         given = vals.map(function (v) { return v > 0; });
@@ -308,7 +330,7 @@
         for (var i = 0; i < 81; i++) if (vals[i] !== sol[i]) return;
         done = true;
         api.audio.play('win');
-        NEXT = (idx + 1) % PUZZLES.length;
+        tierIdx++;
         api.finish({
           win: true,
           title: '第 ' + (idx + 1) + ' 题完成！',
@@ -336,11 +358,11 @@
 
       fit();
       api.timeout(fit, 0);
-      start(NEXT);
+      start();
 
       return {
         destroy: function () { if (ro) ro.disconnect(); },
-        restart: function () { start(NEXT); }
+        restart: function () { start(); }
       };
     }
   });

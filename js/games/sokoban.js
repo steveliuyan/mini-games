@@ -132,6 +132,16 @@
 
       api.setStatus('');
 
+      var LV = [
+        { name: '轻松', undos: 10 },
+        { name: '标准', undos: 3 },
+        { name: '挑战', undos: 0 }
+      ];
+      var undoLeft = 3;
+      var lvBar = api.levelBar({
+        levels: LV, label: '难度', dflt: 1,
+        onPick: function (i, lv) { undoLeft = lv.undos; load(li); }
+      });
       var bar = api.ctrlBar();
       var undoBtn = U.el('button', 'chip', '↩ 撤销');
       undoBtn.type = 'button';
@@ -209,6 +219,7 @@
 
         steps = 0;
         history = [];
+        undoLeft = lvBar.lv().undos;
         fit();
         api.timeout(fit, 0);
         paintEntities();
@@ -246,7 +257,8 @@
         var on = 0;
         boxes.forEach(function (b) { if (goalMap[b.x + ',' + b.y]) on++; });
         api.setStatus('第 ' + (li + 1) + '/' + LEVELS.length + ' 关 · 步数 ' + steps +
-          ' · 归位 ' + on + '/' + goals.length);
+          ' · 归位 ' + on + '/' + goals.length +
+          ' · 撤销 ' + undoLeft + (lvBar.lv().undos > 0 ? '' : '（挑战：禁用）'));
       }
       function potential() { return Math.max(0, 800 - steps * 5); }
       function updateScore() { api.setScore(done ? total : total + potential()); }
@@ -287,6 +299,12 @@
 
       function undo() {
         if (locked || done || !history.length) return;
+        if (undoLeft <= 0) {
+          api.toast(undoLeft === 0 && lvBar.lv().undos === 0 ? '挑战难度不可撤销' : '撤销次数已用完', { type: 'warn', icon: '⚠️' });
+          api.audio.play('tick');
+          return;
+        }
+        undoLeft--;
         var h = history.pop();
         player = { x: h.p.x, y: h.p.y };
         boxes = h.b;
